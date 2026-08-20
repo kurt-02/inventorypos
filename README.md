@@ -1,4 +1,4 @@
-# Coffee Shop POS & Inventory Management System
+# POS & Inventory Management System (Coffee Shop-Focused *for now)
 
 A point-of-sale and recipe-based inventory system for a two-branch coffee shop. Cashiers ring up sales on their own branch's terminal; every sale automatically deducts the ingredients its recipe calls for from that branch's stock. Admins oversee both branches, compare their performance, and manage products, recipes, users, and inventory.
 
