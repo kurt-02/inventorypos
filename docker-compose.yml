@@ -1,0 +1,28 @@
+# Local MySQL for development. The backend connects to this on localhost:3306.
+#
+#   docker compose up -d      start MySQL
+#   docker compose down       stop it (data is kept in the named volume)
+#   docker compose down -v    stop it and wipe all data
+#
+# Schema and seed data are NOT loaded here - run `npm run db:seed` from
+# /backend instead, since user passwords need to be bcrypt-hashed in Node.
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: coffee-pos-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: coffee_pos
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-prootpassword']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:

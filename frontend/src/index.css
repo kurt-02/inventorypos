@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-ink-100 text-ink-900 antialiased;
+  }
+  ::selection {
+    @apply bg-brand-100 text-brand-700;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-ink-100;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-4 py-2 text-sm font-semibold
+           transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-500 text-white hover:bg-brand-600;
+  }
+  .btn-secondary {
+    @apply btn border border-ink-300 bg-white text-ink-700 hover:border-ink-400 hover:bg-ink-50;
+  }
+  /* Outline by default so tables of reversible actions aren't a wall of red;
+     fills solid on hover to confirm the destructive intent. */
+  .btn-danger {
+    @apply btn border border-danger-100 bg-danger-50 text-danger-600 hover:bg-danger-500 hover:text-white;
+  }
+
+  .card {
+    @apply rounded-lg border border-ink-200 bg-white p-5 shadow-sm shadow-ink-900/5;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-ink-300 bg-white px-3 py-2 text-sm text-ink-900
+           outline-none transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-100;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-sm;
+  }
+  .table-base th {
+    @apply border-b border-ink-200 bg-ink-50 px-3 py-2.5 text-left text-xs font-semibold
+           uppercase tracking-wide text-ink-500;
+  }
+  .table-base td {
+    @apply border-b border-ink-100 px-3 py-2.5;
+  }
+  .table-base tbody tr {
+    @apply transition-colors hover:bg-ink-50;
+  }
+
+  /* --- Order ticket: the signature element on the checkout screen. A printed
+     receipt is point-of-sale vernacular for any retail business, so it stays
+     industry-neutral. --- */
+  .ticket {
+    @apply relative rounded-t-lg border border-ink-200 bg-white px-5 pb-8 pt-5 shadow-md shadow-ink-900/10;
+    --ticket-behind: theme('colors.ink.100');
+    border-bottom: none;
+  }
+  /* Scalloped perforation along the bottom edge, drawn as filled dots in
+     whatever color sits behind the ticket — a "punch hole" illusion that
+     never risks masking real content. */
+  .ticket::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -8px;
+    height: 16px;
+    background-image: radial-gradient(circle at 8px 8px, var(--ticket-behind) 7px, transparent 7.5px);
+    background-size: 16px 16px;
+    background-repeat: repeat-x;
+    background-position: top left;
+  }
+  .ticket-line {
+    @apply flex items-baseline gap-2 text-sm;
+  }
+  .ticket-line .fill {
+    @apply mb-[3px] flex-1 border-b border-dotted border-ink-300;
+  }
+  .ticket-total {
+    @apply flex items-center justify-between border-t-2 border-double border-ink-800 pt-3;
+  }
+}
