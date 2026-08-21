@@ -259,6 +259,22 @@ function describeProducts(products) {
   return products.map((p) => `${p.name} ×${p.quantity}`).join(', ');
 }
 
+/** Says which slice of time is on screen, including open-ended ranges. */
+function describeRange({ start_date: start, end_date: end }) {
+  if (start && end) return `${start} to ${end}`;
+  if (start) return `from ${start}`;
+  if (end) return `up to ${end}`;
+  return 'All dates';
+}
+
+/** The same range as a clause that reads correctly inside a sentence. */
+function rangeClause({ start_date: start, end_date: end }) {
+  if (start && end) return ` between ${start} and ${end}`;
+  if (start) return ` on or after ${start}`;
+  if (end) return ` on or before ${end}`;
+  return '';
+}
+
 /**
  * Audit trail of every stock movement, filterable by reason.
  *
@@ -274,11 +290,14 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
   // costs nothing until someone actually opens it.
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
+  // Both blank by default, which means the whole history - narrowing the range
+  // is opt-in, so opening the panel still shows the most recent movements.
+  const [range, setRange] = useState({ start_date: '', end_date: '' });
 
   // Changing a filter restarts paging, so you can't land past the last page.
   // Reset during render so the next fetch already carries page 1, instead of
   // issuing a discarded request for the old page first.
-  const filterKey = `${reason}|${branchFilter}`;
+  const filterKey = `${reason}|${branchFilter}|${range.start_date}|${range.end_date}`;
   const [seenFilterKey, setSeenFilterKey] = useState(filterKey);
   if (seenFilterKey !== filterKey) {
     setSeenFilterKey(filterKey);
@@ -289,9 +308,11 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
     enabled: open,
     params: {
       page,
-      limit: 25,
+      limit: 15,
       ...(reason ? { reason } : {}),
       ...(branchFilter !== 'all' ? { branch_id: branchFilter } : {}),
+      ...(range.start_date ? { start_date: range.start_date } : {}),
+      ...(range.end_date ? { end_date: range.end_date } : {}),
     },
   });
 
@@ -328,15 +349,46 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
           </button>
           <p className="mt-0.5 text-sm text-ink-500">
             {open
-              ? branchName ? `${branchName} only` : 'All branches'
+              ? `${branchName ? `${branchName} only` : 'All branches'} · ${describeRange(range)}`
               : 'Not loaded — open to fetch the audit trail.'}
           </p>
         </div>
         {open && (
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             {saleGroups.length > 0 && (
               <button type="button" onClick={toggleAll} className="btn-secondary">
                 {allExpanded ? 'Collapse all' : 'Expand all'}
+              </button>
+            )}
+            <div>
+              <label className="label" htmlFor="h-start">From</label>
+              <input
+                id="h-start"
+                type="date"
+                className="input"
+                value={range.start_date}
+                max={range.end_date || undefined}
+                onChange={(e) => setRange({ ...range, start_date: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="h-end">To</label>
+              <input
+                id="h-end"
+                type="date"
+                className="input"
+                value={range.end_date}
+                min={range.start_date || undefined}
+                onChange={(e) => setRange({ ...range, end_date: e.target.value })}
+              />
+            </div>
+            {(range.start_date || range.end_date) && (
+              <button
+                type="button"
+                onClick={() => setRange({ start_date: '', end_date: '' })}
+                className="btn-secondary"
+              >
+                Clear dates
               </button>
             )}
             <div>
@@ -364,7 +416,8 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
         ) : groups.length === 0 ? (
           <EmptyState>
             No adjustments recorded{branchName ? ` at ${branchName}` : ''}
-            {reason ? ` with reason "${reason.replace('_', ' ')}"` : ''}.
+            {reason ? ` with reason "${reason.replace('_', ' ')}"` : ''}
+            {rangeClause(range)}.
           </EmptyState>
         ) : (
           <table className="table-base">

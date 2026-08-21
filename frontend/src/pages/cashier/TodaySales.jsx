@@ -18,7 +18,7 @@ export default function TodaySales() {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
   const { data, loading, error, refetch } = useFetch(`/sales/today/${user.branch_id}`, {
-    params: { page, limit: 25 },
+    params: { page, limit: 15 },
   });
 
   const sales = data?.sales ?? [];

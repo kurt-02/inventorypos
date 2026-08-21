@@ -93,7 +93,7 @@ function SalesReport({ filters }) {
       ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
       ...(method ? { payment_method: method } : {}),
       page,
-      limit: 25,
+      limit: 15,
     },
   });
 

@@ -8,7 +8,7 @@
  * unbounded response the paging exists to prevent.
  */
 
-const DEFAULT_LIMIT = 25;
+const DEFAULT_LIMIT = 15;
 const MAX_LIMIT = 100;
 
 /**
