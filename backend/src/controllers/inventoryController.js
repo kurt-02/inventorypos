@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
+const { parsePagination, buildPageMeta } = require('../utils/pagination');
 
 const MANUAL_REASONS = ['waste', 'restock', 'correction'];
 
@@ -165,7 +166,8 @@ const ADJUSTMENT_JOINS = `
  * of only listing the ingredients it burned through.
  */
 const getAdjustmentHistory = asyncHandler(async (req, res) => {
-  const { branch_id, ingredient_id, reason, limit = 100 } = req.query;
+  const { branch_id, ingredient_id, reason } = req.query;
+  const { page, limit, offset } = parsePagination(req.query);
 
   const clauses = [];
   const params = [];
@@ -174,12 +176,32 @@ const getAdjustmentHistory = asyncHandler(async (req, res) => {
   if (reason) { clauses.push('ia.reason = ?'); params.push(reason); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
+  // Counted against the same filters so the client knows how deep the history
+  // goes without fetching it. Cheap: it reads an index, not the rows.
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM inventory_adjustments ia ${where}`,
+    params
+  );
+
+  // Deferred join: the inner query picks this page's ids using only
+  // inventory_adjustments, where idx_adjustments_recent satisfies the ORDER BY
+  // outright. Joining branches/ingredients/users in the same statement made the
+  // optimizer abandon that index and fall back to scanning every row into a
+  // temporary table, so the joins are applied afterwards to 25 rows instead.
   const [rows] = await pool.query(
-    `SELECT ${ADJUSTMENT_COLUMNS} ${ADJUSTMENT_JOINS}
-     ${where}
-     ORDER BY ia.adjusted_at DESC, ia.id DESC
-     LIMIT ?`,
-    [...params, Number(limit)]
+    `SELECT ${ADJUSTMENT_COLUMNS}
+     FROM (
+       SELECT ia.id FROM inventory_adjustments ia
+       ${where}
+       ORDER BY ia.adjusted_at DESC, ia.id DESC
+       LIMIT ? OFFSET ?
+     ) AS page
+     JOIN inventory_adjustments ia ON ia.id = page.id
+     JOIN branches b ON b.id = ia.branch_id
+     JOIN ingredients ing ON ing.id = ia.ingredient_id
+     LEFT JOIN users u ON u.id = ia.adjusted_by
+     ORDER BY ia.adjusted_at DESC, ia.id DESC`,
+    [...params, limit, offset]
   );
 
   const saleIds = [...new Set(rows.map((r) => r.sale_id).filter(Boolean))];
@@ -233,7 +255,11 @@ const getAdjustmentHistory = asyncHandler(async (req, res) => {
     sales = [...bySale.values()];
   }
 
-  res.json({ adjustments: rows, sales });
+  res.json({
+    adjustments: rows,
+    sales,
+    page: buildPageMeta({ page, limit, total }),
+  });
 });
 
 module.exports = { getBranchInventory, getAllInventory, checkInventory, adjustInventory, getAdjustmentHistory };

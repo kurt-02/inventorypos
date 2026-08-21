@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import api, { errorMessage } from '../../utils/api';
 import { useFetch } from '../../hooks/useApi';
 import { formatQuantity, formatDateTime } from '../../utils/format';
-import { Alert, Spinner, PageHeader, Modal, Badge, EmptyState } from '../../components/Ui';
+import { Alert, Spinner, PageHeader, Modal, Badge, EmptyState, Pagination } from '../../components/Ui';
 
 const REASONS = [
   { value: 'restock', label: 'Restock (delivery received)' },
@@ -269,9 +269,27 @@ function describeProducts(products) {
 function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
   const [reason, setReason] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
+  // Closed until asked for. The audit trail is the largest table in the system
+  // and most visits to this page are about current stock, not history, so it
+  // costs nothing until someone actually opens it.
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(1);
+
+  // Changing a filter restarts paging, so you can't land past the last page.
+  // Reset during render so the next fetch already carries page 1, instead of
+  // issuing a discarded request for the old page first.
+  const filterKey = `${reason}|${branchFilter}`;
+  const [seenFilterKey, setSeenFilterKey] = useState(filterKey);
+  if (seenFilterKey !== filterKey) {
+    setSeenFilterKey(filterKey);
+    setPage(1);
+  }
+
   const { data, loading, error } = useFetch('/inventory/adjustments', {
+    enabled: open,
     params: {
-      limit: 100,
+      page,
+      limit: 25,
       ...(reason ? { reason } : {}),
       ...(branchFilter !== 'all' ? { branch_id: branchFilter } : {}),
     },
@@ -298,31 +316,46 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
     <div>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-mono text-base font-bold text-ink-900">Adjustment history</h2>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-controls="adjustment-history-panel"
+            className="flex items-center gap-2 font-mono text-base font-bold text-ink-900"
+          >
+            <span aria-hidden="true" className={open ? 'rotate-90 transition-transform' : 'transition-transform'}>›</span>
+            Adjustment history
+          </button>
           <p className="mt-0.5 text-sm text-ink-500">
-            {branchName ? `${branchName} only` : 'All branches'}
+            {open
+              ? branchName ? `${branchName} only` : 'All branches'
+              : 'Not loaded — open to fetch the audit trail.'}
           </p>
         </div>
-        <div className="flex items-end gap-2">
-          {saleGroups.length > 0 && (
-            <button type="button" onClick={toggleAll} className="btn-secondary">
-              {allExpanded ? 'Collapse all' : 'Expand all'}
-            </button>
-          )}
-          <div>
-            <label className="label" htmlFor="h-reason">Filter by reason</label>
-            <select id="h-reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
-              <option value="">All reasons</option>
-              <option value="sale">Sale (auto-deduction)</option>
-              <option value="shift_count">Shift count</option>
-              <option value="restock">Restock</option>
-              <option value="waste">Waste</option>
-              <option value="correction">Correction</option>
-            </select>
+        {open && (
+          <div className="flex items-end gap-2">
+            {saleGroups.length > 0 && (
+              <button type="button" onClick={toggleAll} className="btn-secondary">
+                {allExpanded ? 'Collapse all' : 'Expand all'}
+              </button>
+            )}
+            <div>
+              <label className="label" htmlFor="h-reason">Filter by reason</label>
+              <select id="h-reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
+                <option value="">All reasons</option>
+                <option value="sale">Sale (auto-deduction)</option>
+                <option value="shift_count">Shift count</option>
+                <option value="restock">Restock</option>
+                <option value="waste">Waste</option>
+                <option value="correction">Correction</option>
+              </select>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
+      {!open ? null : (
+      <div id="adjustment-history-panel">
       {error && <Alert>{error}</Alert>}
 
       <div className="card overflow-x-auto">
@@ -458,6 +491,10 @@ function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
           </table>
         )}
       </div>
+
+      <Pagination page={data?.page} onChange={setPage} label="adjustments" />
+      </div>
+      )}
     </div>
   );
 }

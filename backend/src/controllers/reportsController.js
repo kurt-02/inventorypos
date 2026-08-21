@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
-const { summarizeByPaymentMethod } = require('../constants/paymentMethods');
+const { PAYMENT_METHOD_VALUES } = require('../constants/paymentMethods');
+const { parsePagination, buildPageMeta } = require('../utils/pagination');
 
 /**
  * Formats a Date as a local-time YYYY-MM-DD string. Deliberately not
@@ -30,37 +31,113 @@ function dateRange(query) {
   return { start: `${startDate} 00:00:00`, end: `${endDate} 23:59:59` };
 }
 
-/** GET /api/reports/sales?branch_id=&start_date=&end_date= - admin, full sales history */
+/**
+ * GET /api/reports/sales - admin, paged sales history.
+ *
+ * Query: branch_id, payment_method, search, start_date, end_date, page, limit
+ *
+ * Two queries run per request, both constrained by the same WHERE clause:
+ * one GROUP BY that totals the entire matching set inside the database, and one
+ * that fetches just the rows on the requested page. The totals therefore stay
+ * correct across the whole range while the response carries only `limit` rows -
+ * returning every row so the client could sum them is what made this endpoint
+ * grow without bound.
+ */
 const getSalesReport = asyncHandler(async (req, res) => {
-  const { branch_id } = req.query;
+  const { branch_id, payment_method, search } = req.query;
   const { start, end } = dateRange(req.query);
+  const { page, limit, offset } = parsePagination(req.query);
 
   const clauses = ['s.created_at BETWEEN ? AND ?'];
   const params = [start, end];
+
   if (branch_id) {
     clauses.push('s.branch_id = ?');
     params.push(branch_id);
   }
+  // Guarded against the list so an arbitrary string can't reach the query.
+  if (payment_method && PAYMENT_METHOD_VALUES.includes(payment_method)) {
+    clauses.push('s.payment_method = ?');
+    params.push(payment_method);
+  }
 
-  const [sales] = await pool.query(
-    `SELECT s.id, s.branch_id, b.name AS branch_name, s.cashier_id, u.full_name AS cashier_name,
-            s.total_amount, s.payment_method, s.created_at
-     FROM sales s
-     JOIN branches b ON b.id = s.branch_id
-     JOIN users u ON u.id = s.cashier_id
-     WHERE ${clauses.join(' AND ')}
-     ORDER BY s.created_at DESC`,
+  const term = (search || '').trim();
+  if (term) {
+    // Matches a sale number directly, or any sale containing a product whose
+    // name matches. Resolved in the database so the client never downloads
+    // rows only to discard them.
+    const saleId = Number.parseInt(term, 10);
+    clauses.push(`(
+      ${Number.isFinite(saleId) ? 's.id = ? OR' : ''}
+      s.id IN (
+        SELECT si.sale_id FROM sale_items si
+        JOIN products p ON p.id = si.product_id
+        WHERE p.name LIKE ?
+      )
+    )`);
+    if (Number.isFinite(saleId)) params.push(saleId);
+    params.push(`%${term}%`);
+  }
+
+  const where = `WHERE ${clauses.join(' AND ')}`;
+
+  // Totals for the whole filtered set. At most one row per payment method, so
+  // the overall figures are derived from a handful of rows rather than every
+  // sale in the range.
+  const [totals] = await pool.query(
+    `SELECT s.payment_method, COUNT(*) AS count, COALESCE(SUM(s.total_amount), 0) AS total
+     FROM sales s ${where}
+     GROUP BY s.payment_method`,
     params
   );
 
-  const summary = {
-    count: sales.length,
-    total_revenue: sales.reduce((sum, s) => sum + Number(s.total_amount), 0),
-    by_payment_method: summarizeByPaymentMethod(sales),
-    range: { start, end },
-  };
+  const byPaymentMethod = {};
+  for (const value of PAYMENT_METHOD_VALUES) byPaymentMethod[value] = { count: 0, total: 0 };
+  let count = 0;
+  let totalRevenue = 0;
+  for (const row of totals) {
+    const bucket = byPaymentMethod[row.payment_method];
+    if (bucket) {
+      bucket.count = Number(row.count);
+      bucket.total = Number(row.total);
+    }
+    count += Number(row.count);
+    totalRevenue += Number(row.total);
+  }
 
-  res.json({ sales, summary });
+  // Deferred join, for the same reason as the adjustment history: selecting the
+  // page's ids from `sales` alone lets idx_sales_created_at serve the ORDER BY,
+  // whereas joining branches/users in one statement pushed the optimizer into a
+  // temporary table plus filesort across the whole date range. Only the columns
+  // the table actually renders are selected - branch_id/cashier_id were being
+  // sent and never used.
+  const [sales] = await pool.query(
+    `SELECT s.id, b.name AS branch_name, u.full_name AS cashier_name,
+            s.total_amount, s.payment_method, s.created_at
+     FROM (
+       SELECT s.id FROM sales s
+       ${where}
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT ? OFFSET ?
+     ) AS page
+     JOIN sales s ON s.id = page.id
+     JOIN branches b ON b.id = s.branch_id
+     JOIN users u ON u.id = s.cashier_id
+     ORDER BY s.created_at DESC, s.id DESC`,
+    [...params, limit, offset]
+  );
+
+  res.json({
+    sales,
+    summary: {
+      count,
+      total_revenue: totalRevenue,
+      average_sale: count > 0 ? totalRevenue / count : 0,
+      by_payment_method: byPaymentMethod,
+      range: { start, end },
+    },
+    page: buildPageMeta({ page, limit, total: count }),
+  });
 });
 
 /** GET /api/reports/comparison?start_date=&end_date= - Branch A vs Branch B */

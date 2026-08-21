@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useFetch } from '../../hooks/useApi';
+import { useFetch, useDebounced } from '../../hooks/useApi';
 import { formatCurrency, formatQuantity, formatDateTime, toDateInput } from '../../utils/format';
-import { paymentMethodLabel } from '../../constants/paymentMethods';
-import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState } from '../../components/Ui';
+import { paymentMethodLabel, PAYMENT_METHODS } from '../../constants/paymentMethods';
+import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState, Pagination } from '../../components/Ui';
 
 /** Detailed sales and inventory reporting with date/branch filters. */
 export default function Reports() {
@@ -69,18 +69,64 @@ function cleanParams(filters) {
 }
 
 function SalesReport({ filters }) {
-  const { data, loading, error } = useFetch('/reports/sales', { params: cleanParams(filters) });
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [method, setMethod] = useState('');
+  const debouncedSearch = useDebounced(search);
 
-  if (loading) return <Spinner label="Loading sales…" />;
+  // Any change to what is being asked for restarts at page 1 - otherwise a
+  // narrower filter could leave you stranded on a page that no longer exists.
+  //
+  // Reset during render rather than in an effect: an effect would run *after*
+  // the fetch had already been queued with the old page number, firing a
+  // throwaway request for e.g. page 2 of a result set that just changed.
+  const filterKey = JSON.stringify([cleanParams(filters), debouncedSearch, method]);
+  const [seenFilterKey, setSeenFilterKey] = useState(filterKey);
+  if (seenFilterKey !== filterKey) {
+    setSeenFilterKey(filterKey);
+    setPage(1);
+  }
+
+  const { data, loading, error } = useFetch('/reports/sales', {
+    params: {
+      ...cleanParams(filters),
+      ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
+      ...(method ? { payment_method: method } : {}),
+      page,
+      limit: 25,
+    },
+  });
 
   const sales = data?.sales ?? [];
-  const summary = data?.summary ?? { count: 0, total_revenue: 0 };
-  const average = summary.count > 0 ? summary.total_revenue / summary.count : 0;
+  const summary = data?.summary ?? { count: 0, total_revenue: 0, average_sale: 0 };
+  const average = summary.average_sale ?? 0;
   const byMethod = summary.by_payment_method ?? {};
 
   return (
     <div>
       {error && <Alert>{error}</Alert>}
+
+      <div className="card mb-6 flex flex-wrap items-end gap-4">
+        <div className="min-w-[16rem] flex-1">
+          <label className="label" htmlFor="s-search">Search</label>
+          <input
+            id="s-search"
+            className="input"
+            value={search}
+            placeholder="Sale number or product name"
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="s-method">Payment method</label>
+          <select id="s-method" className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="">All methods</option>
+            {PAYMENT_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard label="Transactions" value={summary.count} />
@@ -102,8 +148,10 @@ function SalesReport({ filters }) {
       </div>
 
       <div className="card overflow-x-auto">
-        {sales.length === 0 ? (
-          <EmptyState>No sales in this period.</EmptyState>
+        {loading ? (
+          <Spinner label="Loading sales…" />
+        ) : sales.length === 0 ? (
+          <EmptyState>No sales match these filters.</EmptyState>
         ) : (
           <table className="table-base">
             <thead>
@@ -133,6 +181,8 @@ function SalesReport({ filters }) {
           </table>
         )}
       </div>
+
+      <Pagination page={data?.page} onChange={setPage} label="sales" />
     </div>
   );
 }

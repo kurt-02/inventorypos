@@ -1,7 +1,8 @@
 const pool = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
-const { PAYMENT_METHOD_VALUES, summarizeByPaymentMethod } = require('../constants/paymentMethods');
+const { PAYMENT_METHOD_VALUES } = require('../constants/paymentMethods');
+const { parsePagination, buildPageMeta } = require('../utils/pagination');
 
 /**
  * POST /api/sales
@@ -136,26 +137,73 @@ const createSale = asyncHandler(async (req, res) => {
   }
 });
 
-/** GET /api/sales/today/:branch_id - cashier's own branch, current day only */
+/**
+ * GET /api/sales/today/:branch_id - cashier's own branch, current day only.
+ *
+ * Query: page, limit
+ *
+ * The day's totals are aggregated in SQL over every sale, while only the
+ * requested page of transactions is returned. A busy branch can ring up
+ * hundreds of sales in a shift, so the list itself has to be paged even though
+ * it is scoped to a single day.
+ */
 const getTodaySales = asyncHandler(async (req, res) => {
   const { branch_id } = req.params;
+  const { page, limit, offset } = parsePagination(req.query);
+
+  // Compared as a half-open range rather than DATE(created_at) = CURDATE():
+  // wrapping the column in a function makes the filter non-sargable, so MySQL
+  // cannot use idx_sales_branch_created and scans every row for the branch.
+  const dayFilter = 's.branch_id = ? AND s.created_at >= CURDATE() AND s.created_at < CURDATE() + INTERVAL 1 DAY';
+
+  // One row per payment method - the day's figures without reading the sales.
+  const [totals] = await pool.query(
+    `SELECT s.payment_method, COUNT(*) AS count, COALESCE(SUM(s.total_amount), 0) AS total,
+            COALESCE(SUM(s.item_count), 0) AS items
+     FROM (
+       SELECT s.id, s.payment_method, s.total_amount,
+              (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) AS item_count
+       FROM sales s WHERE ${dayFilter}
+     ) s
+     GROUP BY s.payment_method`,
+    [branch_id]
+  );
+
+  const byPaymentMethod = {};
+  for (const value of PAYMENT_METHOD_VALUES) byPaymentMethod[value] = { count: 0, total: 0 };
+  let count = 0;
+  let totalRevenue = 0;
+  let itemsSold = 0;
+  for (const row of totals) {
+    const bucket = byPaymentMethod[row.payment_method];
+    if (bucket) {
+      bucket.count = Number(row.count);
+      bucket.total = Number(row.total);
+    }
+    count += Number(row.count);
+    totalRevenue += Number(row.total);
+    itemsSold += Number(row.items);
+  }
 
   const [sales] = await pool.query(
     `SELECT s.id, s.total_amount, s.payment_method, s.created_at, u.full_name AS cashier_name
      FROM sales s
      JOIN users u ON u.id = s.cashier_id
-     WHERE s.branch_id = ? AND DATE(s.created_at) = CURDATE()
-     ORDER BY s.created_at DESC`,
-    [branch_id]
+     WHERE ${dayFilter}
+     ORDER BY s.created_at DESC, s.id DESC
+     LIMIT ? OFFSET ?`,
+    [branch_id, limit, offset]
   );
 
+  // Line items are fetched only for the sales on this page.
   if (sales.length > 0) {
     const saleIds = sales.map((s) => s.id);
     const [items] = await pool.query(
       `SELECT si.sale_id, si.product_id, p.name, si.quantity, si.price_at_sale
        FROM sale_items si
        JOIN products p ON p.id = si.product_id
-       WHERE si.sale_id IN (?)`,
+       WHERE si.sale_id IN (?)
+       ORDER BY si.id`,
       [saleIds]
     );
     const itemsBySale = new Map();
@@ -168,14 +216,17 @@ const getTodaySales = asyncHandler(async (req, res) => {
     }
   }
 
-  const summary = {
-    count: sales.length,
-    total_revenue: sales.reduce((sum, s) => sum + Number(s.total_amount), 0),
-    // Lets a cashier reconcile the drawer against digital takings at shift end.
-    by_payment_method: summarizeByPaymentMethod(sales),
-  };
-
-  res.json({ sales, summary });
+  res.json({
+    sales,
+    summary: {
+      count,
+      total_revenue: totalRevenue,
+      items_sold: itemsSold,
+      // Lets a cashier reconcile the drawer against digital takings at shift end.
+      by_payment_method: byPaymentMethod,
+    },
+    page: buildPageMeta({ page, limit, total: count }),
+  });
 });
 
 module.exports = { createSale, getTodaySales };

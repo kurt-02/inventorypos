@@ -114,8 +114,12 @@ CREATE TABLE IF NOT EXISTS sales (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   -- Covers "today's sales for branch X" and the date-ranged report queries.
   KEY idx_sales_branch_created (branch_id, created_at),
-  -- Supports the cash-vs-QRPH breakdown on the reports screen.
-  KEY idx_sales_payment_method (payment_method),
+  -- The sales report across all branches: range-scans the date and returns
+  -- rows already ordered, so no filesort.
+  KEY idx_sales_created_at (created_at),
+  -- Filtering the report to one payment method over a date range. Leads with
+  -- the method so the trailing date still satisfies the range and ORDER BY.
+  KEY idx_sales_payment_created (payment_method, created_at),
   CONSTRAINT fk_sales_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
   CONSTRAINT fk_sales_cashier FOREIGN KEY (cashier_id) REFERENCES users(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
@@ -156,6 +160,11 @@ CREATE TABLE IF NOT EXISTS inventory_adjustments (
   -- Speeds up the filtered adjustment-history queries on the admin screen.
   KEY idx_adjustments_branch_ingredient (branch_id, ingredient_id),
   KEY idx_adjustments_sale (sale_id),
+  -- The history screen pages newest-first, optionally narrowed by branch or
+  -- reason. One index per filter shape, so each avoids scanning the table.
+  KEY idx_adjustments_recent (adjusted_at, id),
+  KEY idx_adjustments_branch_recent (branch_id, adjusted_at),
+  KEY idx_adjustments_reason_recent (reason, adjusted_at),
   CONSTRAINT fk_adj_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
   CONSTRAINT fk_adj_ingredient FOREIGN KEY (ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE,
   CONSTRAINT fk_adj_user FOREIGN KEY (adjusted_by) REFERENCES users(id) ON DELETE SET NULL,

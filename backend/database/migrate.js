@@ -109,6 +109,56 @@ async function addPaymentMethodToSales(connection, dbName) {
   return { applied: !existed, settled: result.affectedRows };
 }
 
+async function indexExists(connection, dbName, table, index) {
+  const [rows] = await connection.query(
+    `SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?`,
+    [dbName, table, index]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Indexes for the paged list screens.
+ *
+ * Each one exists because a query the UI actually issues was measured reading
+ * far more rows than it returns:
+ *
+ * - sales(created_at): the sales report over "all branches" could only skip-scan
+ *   idx_sales_branch_created and then filesort the result.
+ * - sales(payment_method, created_at): replaces a single-column payment_method
+ *   index, which was near-useless on a two-value column. Leading with the method
+ *   and trailing with the date lets one seek satisfy the filter, the range and
+ *   the ORDER BY together.
+ * - inventory_adjustments(adjusted_at, id) and the branch/reason variants: the
+ *   history was a full scan plus filesort over every adjustment ever recorded,
+ *   for a screen that shows 25 rows. One index per filter the UI exposes.
+ */
+const LIST_INDEXES = [
+  { table: 'sales', name: 'idx_sales_created_at', definition: '(created_at)' },
+  { table: 'sales', name: 'idx_sales_payment_created', definition: '(payment_method, created_at)' },
+  { table: 'inventory_adjustments', name: 'idx_adjustments_recent', definition: '(adjusted_at, id)' },
+  { table: 'inventory_adjustments', name: 'idx_adjustments_branch_recent', definition: '(branch_id, adjusted_at)' },
+  { table: 'inventory_adjustments', name: 'idx_adjustments_reason_recent', definition: '(reason, adjusted_at)' },
+];
+
+async function addListIndexes(connection, dbName) {
+  let added = 0;
+
+  for (const { table, name, definition } of LIST_INDEXES) {
+    if (await indexExists(connection, dbName, table, name)) continue;
+    await connection.query(`ALTER TABLE ${table} ADD INDEX ${name} ${definition}`);
+    added++;
+  }
+
+  // Superseded by idx_sales_payment_created, which leads with the same column.
+  if (await indexExists(connection, dbName, 'sales', 'idx_sales_payment_method')) {
+    await connection.query('ALTER TABLE sales DROP INDEX idx_sales_payment_method');
+  }
+
+  return added;
+}
+
 /** Runs every migration in order. Safe to call on an already-current database. */
 async function runMigrations(connection, dbName) {
   const saleId = await addSaleIdToAdjustments(connection, dbName);
@@ -128,6 +178,13 @@ async function runMigrations(connection, dbName) {
   } else {
     console.log('  sales.payment_method already present - skipped.');
   }
+
+  const indexes = await addListIndexes(connection, dbName);
+  console.log(
+    indexes > 0
+      ? `  Added ${indexes} list index(es) for paged history and reports.`
+      : '  List indexes already present - skipped.'
+  );
 }
 
 module.exports = { runMigrations };

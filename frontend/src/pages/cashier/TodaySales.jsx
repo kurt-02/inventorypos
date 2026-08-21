@@ -1,27 +1,29 @@
+import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useFetch } from '../../hooks/useApi';
 import { formatCurrency, formatTime } from '../../utils/format';
 import { paymentMethodLabel } from '../../constants/paymentMethods';
-import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState } from '../../components/Ui';
+import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState, Pagination } from '../../components/Ui';
 
 /**
  * Today's transactions for the cashier's branch. Deliberately has no date
  * picker - cashiers only ever see the current day (the endpoint itself is
- * scoped to CURDATE(), so this isn't just a UI restriction).
+ * scoped to the current date, so this isn't just a UI restriction).
+ *
+ * The headline figures come from the server, which aggregates them over the
+ * whole day. They therefore stay correct while the list below shows one page
+ * at a time - a busy branch's shift is far more than one screen of sales.
  */
 export default function TodaySales() {
   const { user } = useAuth();
-  const { data, loading, error, refetch } = useFetch(`/sales/today/${user.branch_id}`);
-
-  if (loading) return <Spinner label="Loading today's sales…" />;
+  const [page, setPage] = useState(1);
+  const { data, loading, error, refetch } = useFetch(`/sales/today/${user.branch_id}`, {
+    params: { page, limit: 25 },
+  });
 
   const sales = data?.sales ?? [];
-  const summary = data?.summary ?? { count: 0, total_revenue: 0 };
+  const summary = data?.summary ?? { count: 0, total_revenue: 0, items_sold: 0 };
   const byMethod = summary.by_payment_method ?? {};
-  const itemsSold = sales.reduce(
-    (sum, sale) => sum + (sale.items ?? []).reduce((s, i) => s + i.quantity, 0),
-    0
-  );
 
   return (
     <div>
@@ -33,7 +35,7 @@ export default function TodaySales() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard label="Transactions" value={summary.count} />
-        <StatCard label="Items sold" value={itemsSold} />
+        <StatCard label="Items sold" value={summary.items_sold ?? 0} />
         <StatCard label="Revenue" value={formatCurrency(summary.total_revenue)} accent="green" />
       </div>
 
@@ -52,7 +54,9 @@ export default function TodaySales() {
       </div>
 
       <div className="card">
-        {sales.length === 0 ? (
+        {loading ? (
+          <Spinner label="Loading today's sales…" />
+        ) : sales.length === 0 ? (
           <EmptyState>No sales recorded yet today.</EmptyState>
         ) : (
           <ul className="divide-y divide-dashed divide-ink-200">
@@ -84,6 +88,8 @@ export default function TodaySales() {
           </ul>
         )}
       </div>
+
+      <Pagination page={data?.page} onChange={setPage} label="transactions" />
     </div>
   );
 }

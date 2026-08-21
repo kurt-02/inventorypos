@@ -79,6 +79,51 @@ export function Badge({ children, tone = 'neutral' }) {
   );
 }
 
+/**
+ * Pager for server-paged lists.
+ *
+ * `page` is the meta block the API returns alongside the rows, so the control
+ * never has to know how many records exist - it renders what the server already
+ * counted. Hidden entirely for single-page results, where it would be noise.
+ */
+export function Pagination({ page, onChange, label = 'records' }) {
+  if (!page || page.total_pages <= 1) return null;
+
+  const first = (page.page - 1) * page.limit + 1;
+  const last = Math.min(page.page * page.limit, page.total);
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <p className="text-sm text-ink-500">
+        Showing <span className="font-mono tabular-nums">{first}–{last}</span> of{' '}
+        <span className="font-mono tabular-nums">{page.total.toLocaleString()}</span> {label}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="btn-secondary px-3 py-1"
+          onClick={() => onChange(page.page - 1)}
+          disabled={!page.has_prev}
+        >
+          Previous
+        </button>
+        <span className="px-1 text-sm text-ink-600">
+          Page <span className="font-mono tabular-nums">{page.page}</span> of{' '}
+          <span className="font-mono tabular-nums">{page.total_pages}</span>
+        </span>
+        <button
+          type="button"
+          className="btn-secondary px-3 py-1"
+          onClick={() => onChange(page.page + 1)}
+          disabled={!page.has_next}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Simple centered modal used by the admin CRUD forms. */
 export function Modal({ title, onClose, children, footer }) {
   return (
