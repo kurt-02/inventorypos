@@ -25,6 +25,15 @@ async function constraintExists(connection, dbName, table, constraint) {
   return rows.length > 0;
 }
 
+async function columnIsNullable(connection, dbName, table, column) {
+  const [rows] = await connection.query(
+    `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [dbName, table, column]
+  );
+  return rows[0]?.IS_NULLABLE === 'YES';
+}
+
 /**
  * inventory_adjustments.sale_id — links every ingredient deducted by one
  * checkout back to that checkout, so the admin history can group them.
@@ -66,6 +75,40 @@ async function addSaleIdToAdjustments(connection, dbName) {
   return { applied: true, backfilled: result.affectedRows };
 }
 
+/**
+ * sales.payment_method — how each sale was settled (cash or QRPH).
+ *
+ * The column is added nullable so the ALTER can't stamp an implicit value on
+ * existing rows, then any sale predating it is settled as 'cash' and the column
+ * is tightened to NOT NULL. After this runs, every sale has a payment method
+ * and the database enforces that for new ones.
+ */
+async function addPaymentMethodToSales(connection, dbName) {
+  const existed = await columnExists(connection, dbName, 'sales', 'payment_method');
+
+  if (!existed) {
+    await connection.query(
+      `ALTER TABLE sales
+         ADD COLUMN payment_method ENUM('cash', 'qrph') NULL AFTER total_amount,
+         ADD KEY idx_sales_payment_method (payment_method)`
+    );
+  }
+
+  // Only ever matches rows from a database built before the column existed.
+  const [result] = await connection.query(
+    "UPDATE sales SET payment_method = 'cash' WHERE payment_method IS NULL"
+  );
+
+  // Skipped once already enforced, so a re-run doesn't rebuild the table.
+  if (await columnIsNullable(connection, dbName, 'sales', 'payment_method')) {
+    await connection.query(
+      "ALTER TABLE sales MODIFY payment_method ENUM('cash', 'qrph') NOT NULL"
+    );
+  }
+
+  return { applied: !existed, settled: result.affectedRows };
+}
+
 /** Runs every migration in order. Safe to call on an already-current database. */
 async function runMigrations(connection, dbName) {
   const saleId = await addSaleIdToAdjustments(connection, dbName);
@@ -75,6 +118,15 @@ async function runMigrations(connection, dbName) {
     );
   } else {
     console.log('  inventory_adjustments.sale_id already present - skipped.');
+  }
+
+  const payment = await addPaymentMethodToSales(connection, dbName);
+  if (payment.applied) {
+    console.log(
+      `  Added sales.payment_method (${payment.settled} earlier sale(s) settled as cash).`
+    );
+  } else {
+    console.log('  sales.payment_method already present - skipped.');
   }
 }
 

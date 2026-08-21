@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
+const { PAYMENT_METHOD_VALUES, summarizeByPaymentMethod } = require('../constants/paymentMethods');
 
 /**
  * POST /api/sales
@@ -9,10 +10,10 @@ const { ApiError } = require('../middleware/errorHandler');
  * branch's inventory. Runs inside a transaction with row locks so concurrent
  * checkouts at the same branch can't oversell shared stock.
  *
- * Body: { branch_id, items: [{ product_id, quantity }] }
+ * Body: { branch_id, payment_method, items: [{ product_id, quantity }] }
  */
 const createSale = asyncHandler(async (req, res) => {
-  const { branch_id, items } = req.body;
+  const { branch_id, items, payment_method } = req.body;
 
   if (!branch_id || !Array.isArray(items) || items.length === 0) {
     throw new ApiError(400, 'branch_id and a non-empty items array are required.');
@@ -21,6 +22,12 @@ const createSale = asyncHandler(async (req, res) => {
     if (!item.product_id || !Number.isInteger(item.quantity) || item.quantity <= 0) {
       throw new ApiError(400, 'Each item needs a product_id and a positive integer quantity.');
     }
+  }
+  // The route validator already rejects a bad payment_method; re-checking here
+  // keeps the rule attached to the write itself, so any future caller that
+  // reaches this controller by another path still can't store a junk value.
+  if (!PAYMENT_METHOD_VALUES.includes(payment_method)) {
+    throw new ApiError(400, `Payment method must be one of: ${PAYMENT_METHOD_VALUES.join(', ')}.`);
   }
 
   const connection = await pool.getConnection();
@@ -46,8 +53,8 @@ const createSale = asyncHandler(async (req, res) => {
     );
 
     const [saleResult] = await connection.query(
-      'INSERT INTO sales (branch_id, cashier_id, total_amount) VALUES (?, ?, ?)',
-      [branch_id, req.user.id, totalAmount]
+      'INSERT INTO sales (branch_id, cashier_id, total_amount, payment_method) VALUES (?, ?, ?, ?)',
+      [branch_id, req.user.id, totalAmount, payment_method]
     );
     const saleId = saleResult.insertId;
 
@@ -113,6 +120,7 @@ const createSale = asyncHandler(async (req, res) => {
       branch_id,
       cashier_id: req.user.id,
       total_amount: totalAmount,
+      payment_method,
       items: items.map((i) => ({
         product_id: i.product_id,
         name: productMap.get(i.product_id).name,
@@ -133,7 +141,7 @@ const getTodaySales = asyncHandler(async (req, res) => {
   const { branch_id } = req.params;
 
   const [sales] = await pool.query(
-    `SELECT s.id, s.total_amount, s.created_at, u.full_name AS cashier_name
+    `SELECT s.id, s.total_amount, s.payment_method, s.created_at, u.full_name AS cashier_name
      FROM sales s
      JOIN users u ON u.id = s.cashier_id
      WHERE s.branch_id = ? AND DATE(s.created_at) = CURDATE()
@@ -163,6 +171,8 @@ const getTodaySales = asyncHandler(async (req, res) => {
   const summary = {
     count: sales.length,
     total_revenue: sales.reduce((sum, s) => sum + Number(s.total_amount), 0),
+    // Lets a cashier reconcile the drawer against digital takings at shift end.
+    by_payment_method: summarizeByPaymentMethod(sales),
   };
 
   res.json({ sales, summary });

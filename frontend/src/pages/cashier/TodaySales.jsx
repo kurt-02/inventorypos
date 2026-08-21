@@ -1,7 +1,8 @@
 import { useAuth } from '../../context/AuthContext';
 import { useFetch } from '../../hooks/useApi';
 import { formatCurrency, formatTime } from '../../utils/format';
-import { Alert, Spinner, PageHeader, StatCard, EmptyState } from '../../components/Ui';
+import { paymentMethodLabel } from '../../constants/paymentMethods';
+import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState } from '../../components/Ui';
 
 /**
  * Today's transactions for the cashier's branch. Deliberately has no date
@@ -16,6 +17,7 @@ export default function TodaySales() {
 
   const sales = data?.sales ?? [];
   const summary = data?.summary ?? { count: 0, total_revenue: 0 };
+  const byMethod = summary.by_payment_method ?? {};
   const itemsSold = sales.reduce(
     (sum, sale) => sum + (sale.items ?? []).reduce((s, i) => s + i.quantity, 0),
     0
@@ -35,6 +37,20 @@ export default function TodaySales() {
         <StatCard label="Revenue" value={formatCurrency(summary.total_revenue)} accent="green" />
       </div>
 
+      {/* Split of the day's takings, for counting the drawer against QR receipts. */}
+      <div className="mb-6 grid gap-4 sm:grid-cols-2">
+        <StatCard
+          label="Cash"
+          value={formatCurrency(byMethod.cash?.total ?? 0)}
+          sublabel={`${byMethod.cash?.count ?? 0} transaction(s)`}
+        />
+        <StatCard
+          label="QRPH"
+          value={formatCurrency(byMethod.qrph?.total ?? 0)}
+          sublabel={`${byMethod.qrph?.count ?? 0} transaction(s)`}
+        />
+      </div>
+
       <div className="card">
         {sales.length === 0 ? (
           <EmptyState>No sales recorded yet today.</EmptyState>
@@ -44,11 +60,12 @@ export default function TodaySales() {
               <li key={sale.id} className="py-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="font-mono text-sm font-bold text-ink-900">
+                    <p className="flex flex-wrap items-center gap-2 font-mono text-sm font-bold text-ink-900">
                       #{String(sale.id).padStart(4, '0')}
-                      <span className="ml-2 font-sans text-sm font-normal text-ink-500">
+                      <span className="font-sans text-sm font-normal text-ink-500">
                         {formatTime(sale.created_at)} · {sale.cashier_name}
                       </span>
+                      <Badge tone="blue">{paymentMethodLabel(sale.payment_method)}</Badge>
                     </p>
                     <ul className="mt-1 text-sm text-ink-600">
                       {(sale.items ?? []).map((item, idx) => (

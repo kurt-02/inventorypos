@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useFetch } from '../../hooks/useApi';
 import { formatCurrency, formatQuantity, formatDateTime, toDateInput } from '../../utils/format';
+import { paymentMethodLabel } from '../../constants/paymentMethods';
 import { Alert, Spinner, PageHeader, StatCard, Badge, EmptyState } from '../../components/Ui';
 
 /** Detailed sales and inventory reporting with date/branch filters. */
@@ -75,6 +76,7 @@ function SalesReport({ filters }) {
   const sales = data?.sales ?? [];
   const summary = data?.summary ?? { count: 0, total_revenue: 0 };
   const average = summary.count > 0 ? summary.total_revenue / summary.count : 0;
+  const byMethod = summary.by_payment_method ?? {};
 
   return (
     <div>
@@ -84,6 +86,19 @@ function SalesReport({ filters }) {
         <StatCard label="Transactions" value={summary.count} />
         <StatCard label="Total revenue" value={formatCurrency(summary.total_revenue)} accent="green" />
         <StatCard label="Average sale" value={formatCurrency(average)} />
+      </div>
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2">
+        <StatCard
+          label="Cash sales"
+          value={formatCurrency(byMethod.cash?.total ?? 0)}
+          sublabel={`${byMethod.cash?.count ?? 0} transaction(s)`}
+        />
+        <StatCard
+          label="QRPH sales"
+          value={formatCurrency(byMethod.qrph?.total ?? 0)}
+          sublabel={`${byMethod.qrph?.count ?? 0} transaction(s)`}
+        />
       </div>
 
       <div className="card overflow-x-auto">
@@ -97,6 +112,7 @@ function SalesReport({ filters }) {
                 <th>When</th>
                 <th>Branch</th>
                 <th>Cashier</th>
+                <th>Payment</th>
                 <th className="text-right">Amount</th>
               </tr>
             </thead>
@@ -107,6 +123,9 @@ function SalesReport({ filters }) {
                   <td className="whitespace-nowrap text-ink-600">{formatDateTime(sale.created_at)}</td>
                   <td className="text-ink-600">{sale.branch_name}</td>
                   <td className="text-ink-600">{sale.cashier_name}</td>
+                  <td>
+                    <Badge tone="blue">{paymentMethodLabel(sale.payment_method)}</Badge>
+                  </td>
                   <td className="text-right font-mono tabular-nums font-medium">{formatCurrency(sale.total_amount)}</td>
                 </tr>
               ))}

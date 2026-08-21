@@ -108,9 +108,14 @@ CREATE TABLE IF NOT EXISTS sales (
   branch_id INT NOT NULL,
   cashier_id INT NOT NULL,
   total_amount DECIMAL(10,2) NOT NULL,
+  -- How the customer settled. NOT NULL so the database enforces what the API
+  -- already requires: no sale can be recorded without a payment method.
+  payment_method ENUM('cash', 'qrph') NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   -- Covers "today's sales for branch X" and the date-ranged report queries.
   KEY idx_sales_branch_created (branch_id, created_at),
+  -- Supports the cash-vs-QRPH breakdown on the reports screen.
+  KEY idx_sales_payment_method (payment_method),
   CONSTRAINT fk_sales_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
   CONSTRAINT fk_sales_cashier FOREIGN KEY (cashier_id) REFERENCES users(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;

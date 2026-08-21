@@ -3,6 +3,7 @@ import api, { errorMessage } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useFetch } from '../../hooks/useApi';
 import { formatCurrency } from '../../utils/format';
+import { PAYMENT_METHODS } from '../../constants/paymentMethods';
 import { Alert, Spinner, EmptyState, PageHeader } from '../../components/Ui';
 
 /**
@@ -18,6 +19,9 @@ export default function Pos() {
   const [category, setCategory] = useState('All');
   const [feedback, setFeedback] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // No default on purpose: the cashier picks every time, so a QRPH payment
+  // can't be silently recorded as cash by skipping the step.
+  const [paymentMethod, setPaymentMethod] = useState(null);
 
   const products = data?.products ?? [];
   const categories = useMemo(
@@ -54,17 +58,24 @@ export default function Pos() {
 
   const checkout = async () => {
     if (cart.length === 0) return;
+    if (!paymentMethod) {
+      setFeedback({ type: 'error', text: 'Select a payment method before completing the sale.' });
+      return;
+    }
     setSubmitting(true);
     setFeedback(null);
     try {
       const { data: sale } = await api.post('/sales', {
         branch_id: user.branch_id,
+        payment_method: paymentMethod,
         items: cart.map(({ product_id, quantity }) => ({ product_id, quantity })),
       });
+      const methodLabel = PAYMENT_METHODS.find((m) => m.value === sale.payment_method)?.label;
       setCart([]);
+      setPaymentMethod(null);
       setFeedback({
         type: 'success',
-        text: `Sale #${sale.id} completed — ${formatCurrency(sale.total_amount)}. Inventory updated.`,
+        text: `Sale #${sale.id} completed — ${formatCurrency(sale.total_amount)} paid by ${methodLabel}. Inventory updated.`,
       });
     } catch (err) {
       // A 409 here means a recipe ingredient ran out at this branch.
@@ -166,11 +177,43 @@ export default function Pos() {
               <span className="font-mono text-2xl font-bold tabular-nums text-ink-900">{formatCurrency(total)}</span>
             </div>
 
+            <fieldset className="mt-4">
+              <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
+                Payment method
+              </legend>
+              <div className="grid grid-cols-2 gap-2">
+                {PAYMENT_METHODS.map((method) => {
+                  const selected = paymentMethod === method.value;
+                  return (
+                    <button
+                      key={method.value}
+                      type="button"
+                      onClick={() => setPaymentMethod(method.value)}
+                      aria-pressed={selected}
+                      title={method.hint}
+                      className={`rounded-md border px-3 py-2.5 text-sm font-semibold transition-colors ${
+                        selected
+                          ? 'border-brand-500 bg-brand-500 text-white'
+                          : 'border-ink-300 bg-white text-ink-700 hover:border-brand-400 hover:text-brand-600'
+                      }`}
+                    >
+                      {method.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+
             <div className="mt-4 flex gap-2">
               <button type="button" onClick={() => setCart([])} disabled={cart.length === 0} className="btn-secondary flex-1">
                 Clear
               </button>
-              <button type="button" onClick={checkout} disabled={cart.length === 0 || submitting} className="btn-primary flex-[2]">
+              <button
+                type="button"
+                onClick={checkout}
+                disabled={cart.length === 0 || !paymentMethod || submitting}
+                className="btn-primary flex-[2]"
+              >
                 {submitting ? 'Processing…' : 'Checkout'}
               </button>
             </div>

@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const asyncHandler = require('../middleware/asyncHandler');
+const { summarizeByPaymentMethod } = require('../constants/paymentMethods');
 
 /**
  * Formats a Date as a local-time YYYY-MM-DD string. Deliberately not
@@ -43,7 +44,7 @@ const getSalesReport = asyncHandler(async (req, res) => {
 
   const [sales] = await pool.query(
     `SELECT s.id, s.branch_id, b.name AS branch_name, s.cashier_id, u.full_name AS cashier_name,
-            s.total_amount, s.created_at
+            s.total_amount, s.payment_method, s.created_at
      FROM sales s
      JOIN branches b ON b.id = s.branch_id
      JOIN users u ON u.id = s.cashier_id
@@ -55,6 +56,7 @@ const getSalesReport = asyncHandler(async (req, res) => {
   const summary = {
     count: sales.length,
     total_revenue: sales.reduce((sum, s) => sum + Number(s.total_amount), 0),
+    by_payment_method: summarizeByPaymentMethod(sales),
     range: { start, end },
   };
 
