@@ -28,6 +28,10 @@ export default function InventoryManager() {
   const visible = branchFilter === 'all'
     ? inventory
     : inventory.filter((i) => String(i.branch_id) === branchFilter);
+  // Null while showing every branch; the history pane uses it to label itself.
+  const branchName = branchFilter === 'all'
+    ? null
+    : branches.find(([id]) => String(id) === branchFilter)?.[1] ?? null;
 
   const openAdjust = (row) => {
     setForm({ direction: 'add', amount: '', reason: 'restock', notes: '' });
@@ -79,6 +83,7 @@ export default function InventoryManager() {
       {error && <Alert>{error}</Alert>}
       {feedback && <Alert type={feedback.type} onDismiss={() => setFeedback(null)}>{feedback.text}</Alert>}
 
+      {/* Applies to the stock table and the adjustment history below it. */}
       <div className="mb-4 flex flex-wrap gap-2">
         <button type="button" onClick={() => setBranchFilter('all')}
           className={branchFilter === 'all' ? 'btn-primary' : 'btn-secondary'}>
@@ -134,7 +139,7 @@ export default function InventoryManager() {
         )}
       </div>
 
-      <AdjustmentHistory key={historyKey} />
+      <AdjustmentHistory key={historyKey} branchFilter={branchFilter} branchName={branchName} />
 
       {modal && (
         <Modal
@@ -254,12 +259,22 @@ function describeProducts(products) {
   return products.map((p) => `${p.name} ×${p.quantity}`).join(', ');
 }
 
-/** Audit trail of every stock movement, filterable by reason. */
-function AdjustmentHistory() {
+/**
+ * Audit trail of every stock movement, filterable by reason.
+ *
+ * The branch comes from the page-level filter rather than a control of its own,
+ * so picking a branch narrows the stock table and this history together instead
+ * of leaving one showing rows from the branch you just filtered out.
+ */
+function AdjustmentHistory({ branchFilter = 'all', branchName = null }) {
   const [reason, setReason] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
   const { data, loading, error } = useFetch('/inventory/adjustments', {
-    params: { limit: 100, ...(reason ? { reason } : {}) },
+    params: {
+      limit: 100,
+      ...(reason ? { reason } : {}),
+      ...(branchFilter !== 'all' ? { branch_id: branchFilter } : {}),
+    },
   });
 
   const adjustments = data?.adjustments ?? [];
@@ -282,7 +297,12 @@ function AdjustmentHistory() {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <h2 className="font-mono text-base font-bold text-ink-900">Adjustment history</h2>
+        <div>
+          <h2 className="font-mono text-base font-bold text-ink-900">Adjustment history</h2>
+          <p className="mt-0.5 text-sm text-ink-500">
+            {branchName ? `${branchName} only` : 'All branches'}
+          </p>
+        </div>
         <div className="flex items-end gap-2">
           {saleGroups.length > 0 && (
             <button type="button" onClick={toggleAll} className="btn-secondary">
@@ -309,7 +329,10 @@ function AdjustmentHistory() {
         {loading ? (
           <Spinner label="Loading history…" />
         ) : groups.length === 0 ? (
-          <EmptyState>No adjustments recorded.</EmptyState>
+          <EmptyState>
+            No adjustments recorded{branchName ? ` at ${branchName}` : ''}
+            {reason ? ` with reason "${reason.replace('_', ' ')}"` : ''}.
+          </EmptyState>
         ) : (
           <table className="table-base">
             <thead>
